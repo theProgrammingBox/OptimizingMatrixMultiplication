@@ -106,6 +106,36 @@ void naiveMultithreadedMatrixMultiplicationSetup(int M, int N, int K, float* A, 
 	}
 }
 
+void naiveMultithreadedMatrixMultiplication2(int M, int N, int K, float* A, float* B, float* C, int startNode, int nodes) {
+	for (int i = startNode; i < startNode + nodes; i++) {
+		int row = i / N;
+		int column = i % N;
+		for (int k = 0; k < K; k++) {
+			C[i] += A[row * K + k] * B[k * N + column];
+		}
+	}
+}
+
+void naiveMultithreadedMatrixMultiplicationSetup2(int M, int N, int K, float* A, float* B, float* C) {
+	const int threads = 8;
+	thread processes[threads];
+	int processesPerThread = (M * N) / threads;
+	int processesPerThreadRemainder = M * N - threads * processesPerThread;
+
+	int currentNode = 0;
+	for (int i = 0; i < processesPerThreadRemainder; i++) {
+		processes[i] = thread(naiveMultithreadedMatrixMultiplication2, M, N, K, A, B, C, currentNode, processesPerThread + 1);
+		currentNode += processesPerThread + 1;
+	}
+	for (int i = processesPerThreadRemainder; i < threads; i++) {
+		processes[i] = thread(naiveMultithreadedMatrixMultiplication2, M, N, K, A, B, C, currentNode, processesPerThread);
+		currentNode += processesPerThread;
+	}
+	for (int i = 0; i < threads; i++) {
+		processes[i].join();
+	}
+}
+
 int main() {
 	const int batchSize = 1;
 	int iter;
@@ -142,6 +172,16 @@ int main() {
 	}
 	cout << endl;*/
 
+	memset(C, 0, M * N * sizeof(float));
+	iter = batchSize;
+	start = high_resolution_clock::now();
+	while (iter--) {
+		naiveMultithreadedMatrixMultiplicationSetup2(M, N, K, A, B, C);
+	}
+	end = high_resolution_clock::now();
+	duration = duration_cast<microseconds>(end - start);
+	cout << "Time taken by naiveMultithreadedMatrixMultiplication2: " << duration.count() * 1e-6 / batchSize << " seconds" << endl;
+
 	memcpy(D, C, M * N * sizeof(float));
 	memset(C, 0, M * N * sizeof(float));
 	iter = batchSize;
@@ -161,12 +201,12 @@ int main() {
 	}
 	cout << endl;*/
 	
-	for (int i = 0; i < M * N; i++) {
+	/*for (int i = 0; i < M * N; i++) {
 		if (C[i] != D[i]) {
 			cout << "Error" << endl;
 			break;
 		}
-	}
+	}*/
 	
 	delete[] A;
 	delete[] B;
