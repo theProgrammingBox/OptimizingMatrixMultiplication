@@ -65,30 +65,41 @@ __global__ void matrixMul(A_gpu,B_gpu,C_gpu,K){
 
 }*/
 
-void naiveMultithreadedMatrixMultiplication(int M, int N, int K, float* A, float* B, float* C, int startNode, int nodes) {
-	for (int i = startNode; i < startNode + nodes; i++) {
-		int row = i / N;
-		int column = i % N;
+void naiveMultithreadedMatrixMultiplication(int M, int N, int K, float* A, float* B, float* C, int row, int column, int nodes) {
+	for (int i = 0; i < nodes; i++) {
 		for (int k = 0; k < K; k++) {
-			C[i] += A[row * K + k] * B[k * N + column];
+			C[row * N + column] += A[row * K + k] * B[k * N + column];
 		}
+		row++;
+		column += row >= M;
+		row *= row < M;
 	}
 }
 
 void naiveMultithreadedMatrixMultiplicationSetup(int M, int N, int K, float* A, float* B, float* C) {
-	const int threads = 8;
+	const int threads = 12;
 	thread processes[threads];
 	int processesPerThread = (M * N) / threads;
-	int processesPerThreadRemainder = M * N - threads * processesPerThread;
+	int processesPerThreadRemainder = (M * N) - threads * processesPerThread;
 
-	int currentNode = 0;
+	int row = 0;
+	int column = 0;
+	int columnsPerThread1 = (processesPerThread + 1) / M;
+	int rowsPerThread1 = (processesPerThread + 1) - columnsPerThread1 * M;
+	int columnsPerThread2 = processesPerThread / M;
+	int rowsPerThread2 = processesPerThread - columnsPerThread2 * M;
+	
 	for (int i = 0; i < processesPerThreadRemainder; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, currentNode, processesPerThread + 1);
-		currentNode += processesPerThread + 1;
+		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, row, column, processesPerThread + 1);
+		row += rowsPerThread1;
+		column += columnsPerThread1 + (row >= M);
+		row -= M * (row >= M);
 	}
 	for (int i = processesPerThreadRemainder; i < threads; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, currentNode, processesPerThread);
-		currentNode += processesPerThread;
+		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, row, column, processesPerThread);
+		row += rowsPerThread2;
+		column += columnsPerThread2 + (row >= M);
+		row -= M * (row >= M);
 	}
 	for (int i = 0; i < threads; i++) {
 		processes[i].join();
@@ -100,12 +111,13 @@ int main() {
 	int iter;
 	Random random;
 
-	int M = 10;
-	int N = 10;
-	int K = 10;
+	int M = 1000;
+	int N = 1000;
+	int K = 1000;
 	float* A = new float[M * K];
 	float* B = new float[K * N];
 	float* C = new float[M * N];
+	float* D = new float[M * N];
 
 	for (int i = 0; i < M * K; i++) {
 		A[i] = random.normalRand();
@@ -130,6 +142,7 @@ int main() {
 	}
 	cout << endl;*/
 
+	memcpy(D, C, M * N * sizeof(float));
 	memset(C, 0, M * N * sizeof(float));
 	iter = batchSize;
 	start = high_resolution_clock::now();
@@ -147,6 +160,13 @@ int main() {
 		cout << endl;
 	}
 	cout << endl;*/
+	
+	for (int i = 0; i < M * N; i++) {
+		if (C[i] != D[i]) {
+			cout << "Error" << endl;
+			break;
+		}
+	}
 	
 	delete[] A;
 	delete[] B;
