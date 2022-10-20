@@ -10,129 +10,203 @@ using std::chrono::duration_cast;
 using std::chrono::microseconds;
 using std::thread;
 
-// writing mutliple matrix mutliplication algorithms to compare their performance
-// 1. naive cpu matrix multiplication
-/*void main(){
-  define A, B, C
-  for i = 0 to M do
-	for j = 0 to N do
-	  for k = 0 to K do
-		C(i,j) <= C(i,j) + A(i,k) * B(k,j)
-	  end
-	end
-  end
-}*/
+void MatrixMultiplicationBaseline(const float* A, const float* B, float* C, uint32_t N) {
+	for (uint32_t row = 0; row < N; row++)
+		for (uint32_t col = 0; col < N; col++) {
+			for (uint32_t idx = 0; idx < N; idx++)
+				C[row * N + col] += A[row * N + idx] * B[idx * N + col];
+		}
+}
 
-void naiveMatrixMultiplication(int M, int N, int K, float* A, float* B, float* C) {
-	for (int i = 0; i < M; i++) {
-		for (int j = 0; j < N; j++) {
-			for (int k = 0; k < K; k++) {
-				C[i * N + j] += A[i * K + k] * B[k * N + j];
+void MatrixMultiplicationParallel(const float* A, const float* B, float* C, uint32_t N, uint32_t start_row, uint32_t end_row) {
+	for (uint32_t row = start_row; row < end_row; row++)
+		for (uint32_t col = 0; col < N; col++) {
+			for (uint32_t idx = 0; idx < N; idx++)
+				C[row * N + col] += A[row * N + idx] * B[idx * N + col];
+		}
+}
+
+void MatrixMultiplicationParallelSetup(const float* A, const float* B, float* C, uint32_t N, uint32_t num_threads) {
+	const uint32_t threads = 12;
+	const uint32_t rows_per_thread = N / threads;
+	thread t[threads];
+
+	for (uint32_t i = 0; i < threads; i++) {
+		t[i] = thread(MatrixMultiplicationParallel, A, B, C, N, i * rows_per_thread, (i + 1) * rows_per_thread);
+	}
+
+	MatrixMultiplicationParallel(A, B, C, N, threads * rows_per_thread, N);
+
+	for (uint32_t i = 0; i < threads; i++) {
+		t[i].join();
+	}
+}
+
+void MatrixMultiplicationBlocked(const float* A, const float* B, float* C, uint32_t N) {
+	for (uint32_t row = 0; row < N; row++) {
+		uint32_t block;
+		for (block = 0; block < N; block += 16) {
+			uint32_t chunk;
+			for (chunk = 0; chunk < N; chunk += 16) {
+				for (uint32_t sub_chunk = 0; sub_chunk < 16; sub_chunk++) {
+					for (uint32_t idx = 0; idx < 16; idx++) {
+						C[row * N + block + idx] += A[row * N + chunk + sub_chunk] * B[chunk * N + sub_chunk * N + block + idx];
+					}
+				}
+			}
+			for (uint32_t sub_chunk = 0; sub_chunk < chunk - N; sub_chunk++) {
+				for (uint32_t idx = 0; idx < 16; idx++) {
+					C[row * N + block + idx] += A[row * N + sub_chunk] * B[sub_chunk * N + block + idx];
+				}
+			}
+		}
+		uint32_t chunk;
+		for (chunk = 0; chunk < N; chunk += 16) {
+			for (uint32_t sub_chunk = 0; sub_chunk < 16; sub_chunk++) {
+				for (uint32_t idx = 0; idx < block - N; idx++) {
+					C[row * N + idx] += A[row * N + chunk + sub_chunk] * B[chunk * N + sub_chunk * N + idx];
+				}
+			}
+		}
+		for (uint32_t sub_chunk = 0; sub_chunk < chunk - N; sub_chunk++) {
+			for (uint32_t idx = 0; idx < block - N; idx++) {
+				C[row * N + idx] += A[row * N + sub_chunk] * B[sub_chunk * N + idx];
 			}
 		}
 	}
 }
 
-// 2. naive multitheaded matrix multiplication
-/*void main(){
-
-	define A_cpu, B_cpu, C_cpu in the CPU memory
-	define A_gpu, B_gpu, C_gpu in the GPU memory
-
-	memcopy A_cpu to A_gpu
-	memcopy B_cpu to B_gpu
-
-	dim3 dimBlock(16, 16)
-	dim3 dimGrid(N/dimBlock.x, M/dimBlock.y)
-
-	matrixMul<<<dimGrid, dimBlock>>>(A_gpu,B_gpu,C_gpu,K)
-
-	memcopy C_gpu to C_cpu
-
-}
-__global__ void matrixMul(A_gpu,B_gpu,C_gpu,K){
-
-	temp <= 0
-
-	i <= blockIdx.y * blockDim.y + threadIdx.y    // Row i of matrix C
-	j <= blockIdx.x * blockDim.x + threadIdx.x    // Column j of matrix C
-
-	for k = 0 to K-1 do
-		accu <= accu + A_gpu(i,k) * B_gpu(k,j)
-	end
-
-	C_gpu(i,j) <= accu
-
-}*/
-
-void naiveMultithreadedMatrixMultiplication(int M, int N, int K, float* A, float* B, float* C, int row, int column, int nodes) {
-	for (int i = 0; i < nodes; i++) {
-		for (int k = 0; k < K; k++) {
-			C[row * N + column] += A[row * K + k] * B[k * N + column];
+void MatrixMultiplicationBlockedParallel(const float* A, const float* B, float* C, uint32_t N, uint32_t start_row, uint32_t end_row) {
+	for (uint32_t row = start_row; row < end_row; row++) {
+		uint32_t block;
+		for (block = 0; block < N; block += 16) {
+			uint32_t chunk;
+			for (chunk = 0; chunk < N; chunk += 16) {
+				for (uint32_t sub_chunk = 0; sub_chunk < 16; sub_chunk++) {
+					for (uint32_t idx = 0; idx < 16; idx++) {
+						C[row * N + block + idx] += A[row * N + chunk + sub_chunk] * B[chunk * N + sub_chunk * N + block + idx];
+					}
+				}
+			}
+			for (uint32_t sub_chunk = 0; sub_chunk < chunk - N; sub_chunk++) {
+				for (uint32_t idx = 0; idx < 16; idx++) {
+					C[row * N + block + idx] += A[row * N + sub_chunk] * B[sub_chunk * N + block + idx];
+				}
+			}
 		}
-		row++;
-		column += row >= M;
-		row *= row < M;
+		uint32_t chunk;
+		for (chunk = 0; chunk < N; chunk += 16) {
+			for (uint32_t sub_chunk = 0; sub_chunk < 16; sub_chunk++) {
+				for (uint32_t idx = 0; idx < block - N; idx++) {
+					C[row * N + idx] += A[row * N + chunk + sub_chunk] * B[chunk * N + sub_chunk * N + idx];
+				}
+			}
+		}
+		for (uint32_t sub_chunk = 0; sub_chunk < chunk - N; sub_chunk++) {
+			for (uint32_t idx = 0; idx < block - N; idx++) {
+				C[row * N + idx] += A[row * N + sub_chunk] * B[sub_chunk * N + idx];
+			}
+		}
 	}
 }
 
-void naiveMultithreadedMatrixMultiplicationSetup(int M, int N, int K, float* A, float* B, float* C) {
-	const int threads = 12;
-	thread processes[threads];
-	int processesPerThread = (M * N) / threads;
-	int processesPerThreadRemainder = (M * N) - threads * processesPerThread;
-
-	int row = 0;
-	int column = 0;
-	int columnsPerThread1 = (processesPerThread + 1) / M;
-	int rowsPerThread1 = (processesPerThread + 1) - columnsPerThread1 * M;
-	int columnsPerThread2 = processesPerThread / M;
-	int rowsPerThread2 = processesPerThread - columnsPerThread2 * M;
+void MatrixMultiplicationBlockedParallelSetup(const float* A, const float* B, float* C, uint32_t N, uint32_t num_threads) {
+	const uint32_t threads = 12;
+	const uint32_t rows_per_thread = N / threads;
+	thread t[threads];
 	
-	for (int i = 0; i < processesPerThreadRemainder; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, row, column, processesPerThread + 1);
-		row += rowsPerThread1;
-		column += columnsPerThread1 + (row >= M);
-		row -= M * (row >= M);
+	for (uint32_t i = 0; i < threads; i++) {
+		t[i] = thread(MatrixMultiplicationBlockedParallel, A, B, C, N, i * rows_per_thread, (i + 1) * rows_per_thread);
 	}
-	for (int i = processesPerThreadRemainder; i < threads; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, row, column, processesPerThread);
-		row += rowsPerThread2;
-		column += columnsPerThread2 + (row >= M);
-		row -= M * (row >= M);
-	}
-	for (int i = 0; i < threads; i++) {
-		processes[i].join();
+	
+	MatrixMultiplicationBlockedParallel(A, B, C, N, threads * rows_per_thread, N);
+	
+	for (uint32_t i = 0; i < threads; i++) {
+		t[i].join();
 	}
 }
 
-void naiveMultithreadedMatrixMultiplication2(int M, int N, int K, float* A, float* B, float* C, int startNode, int nodes) {
-	for (int i = startNode; i < startNode + nodes; i++) {
-		int row = i / N;
-		int column = i % N;
-		for (int k = 0; k < K; k++) {
-			C[i] += A[row * K + k] * B[k * N + column];
+void MatrixMultiplicationBlockedColumn(const float* A, const float* B, float* C, uint32_t N) {
+	uint32_t col_chunk;
+	for (col_chunk = 0; col_chunk < N; col_chunk += 16) {
+		for (uint32_t row = 0; row < N; row++) {
+			uint32_t tile;
+			for (tile = 0; tile < N; tile += 16) {
+				for (uint32_t tile_row = 0; tile_row < 16; tile_row++) {
+					for (uint32_t idx = 0; idx < 16; idx++) {
+						C[row * N + col_chunk + idx] += A[row * N + tile + tile_row] * B[tile * N + tile_row * N + col_chunk + idx];
+					}
+				}
+			}
+			for (uint32_t tile_row = 0; tile_row < tile - N; tile_row++) {
+				for (uint32_t idx = 0; idx < 16; idx++) {
+					C[row * N + col_chunk + idx] += A[row * N + tile_row] * B[tile_row * N + col_chunk + idx];
+				}
+			}
+		}
+	}
+	uint32_t tile;
+	for (tile = 0; tile < N; tile += 16) {
+		for (uint32_t tile_row = 0; tile_row < 16; tile_row++) {
+			for (uint32_t idx = 0; idx < col_chunk - N; idx++) {
+				C[idx] += A[tile + tile_row] * B[tile * N + tile_row * N + idx];
+			}
+		}
+	}
+	for (uint32_t tile_row = 0; tile_row < tile - N; tile_row++) {
+		for (uint32_t idx = 0; idx < col_chunk - N; idx++) {
+			C[idx] += A[tile_row] * B[tile_row * N + idx];
 		}
 	}
 }
 
-void naiveMultithreadedMatrixMultiplicationSetup2(int M, int N, int K, float* A, float* B, float* C) {
-	const int threads = 8;
-	thread processes[threads];
-	int processesPerThread = (M * N) / threads;
-	int processesPerThreadRemainder = M * N - threads * processesPerThread;
+void MatrixMultiplicationBlockedColumnParallel(const float* A, const float* B, float* C, uint32_t N, uint32_t start_row, uint32_t end_row) {
+	uint32_t col_chunk;
+	for (col_chunk = 0; col_chunk < N; col_chunk += 16) {
+		for (uint32_t row = start_row; row < end_row; row++) {
+			uint32_t tile;
+			for (tile = 0; tile < N; tile += 16) {
+				for (uint32_t tile_row = 0; tile_row < 16; tile_row++) {
+					for (uint32_t idx = 0; idx < 16; idx++) {
+						C[row * N + col_chunk + idx] += A[row * N + tile + tile_row] * B[tile * N + tile_row * N + col_chunk + idx];
+					}
+				}
+			}
+			for (uint32_t tile_row = 0; tile_row < tile - N; tile_row++) {
+				for (uint32_t idx = 0; idx < 16; idx++) {
+					C[row * N + col_chunk + idx] += A[row * N + tile_row] * B[tile_row * N + col_chunk + idx];
+				}
+			}
+		}
+	}
+	uint32_t tile;
+	for (tile = 0; tile < N; tile += 16) {
+		for (uint32_t tile_row = 0; tile_row < 16; tile_row++) {
+			for (uint32_t idx = 0; idx < col_chunk - N; idx++) {
+				C[idx] += A[tile + tile_row] * B[tile * N + tile_row * N + idx];
+			}
+		}
+	}
+	for (uint32_t tile_row = 0; tile_row < tile - N; tile_row++) {
+		for (uint32_t idx = 0; idx < col_chunk - N; idx++) {
+			C[idx] += A[tile_row] * B[tile_row * N + idx];
+		}
+	}
+}
 
-	int currentNode = 0;
-	for (int i = 0; i < processesPerThreadRemainder; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication2, M, N, K, A, B, C, currentNode, processesPerThread + 1);
-		currentNode += processesPerThread + 1;
+void MatrixMultiplicationBlockedColumnParallelSetup(const float* A, const float* B, float* C, uint32_t N, uint32_t num_threads) {
+	const uint32_t threads = 12;
+	const uint32_t rows_per_thread = N / threads;
+	thread t[threads];
+
+	for (uint32_t i = 0; i < threads; i++) {
+		t[i] = thread(MatrixMultiplicationBlockedColumnParallel, A, B, C, N, i * rows_per_thread, (i + 1) * rows_per_thread);
 	}
-	for (int i = processesPerThreadRemainder; i < threads; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication2, M, N, K, A, B, C, currentNode, processesPerThread);
-		currentNode += processesPerThread;
-	}
-	for (int i = 0; i < threads; i++) {
-		processes[i].join();
+	
+	MatrixMultiplicationBlockedColumnParallel(A, B, C, N, threads * rows_per_thread, N);
+
+	for (uint32_t i = 0; i < threads; i++) {
+		t[i].join();
 	}
 }
 
@@ -141,9 +215,9 @@ int main() {
 	int iter;
 	Random random;
 
-	int M = 1000;
-	int N = 1000;
-	int K = 1000;
+	int M = 1024;
+	int N = 1024;
+	int K = 1024;
 	float* A = new float[M * K];
 	float* B = new float[K * N];
 	float* C = new float[M * N];
@@ -151,62 +225,86 @@ int main() {
 
 	for (int i = 0; i < M * K; i++) {
 		A[i] = random.normalRand();
+	}
+	for (int i = 0; i < K * N; i++) {
 		B[i] = random.normalRand();
 	}
 	memset(C, 0, M * N * sizeof(float));
-
 	iter = batchSize;
 	auto start = high_resolution_clock::now();
 	while (iter--) {
-		naiveMatrixMultiplication(M, N, K, A, B, C);
+		MatrixMultiplicationBaseline(A, B, C, M);
 	}
 	auto end = high_resolution_clock::now();
 	auto duration = duration_cast<microseconds>(end - start);
-	cout << "Time taken by naiveMatrixMultiplication: " << duration.count() * 1e-6 / batchSize << " seconds" << endl;
-	
-	/*for (int i = 0; i < M; i++) {
-		for (int j = 0; j < N; j++) {
-			cout << C[i * N + j] << " ";
-		}
-		cout << endl;
-	}
-	cout << endl;*/
-
-	memset(C, 0, M * N * sizeof(float));
-	iter = batchSize;
-	start = high_resolution_clock::now();
-	while (iter--) {
-		naiveMultithreadedMatrixMultiplicationSetup2(M, N, K, A, B, C);
-	}
-	end = high_resolution_clock::now();
-	duration = duration_cast<microseconds>(end - start);
-	cout << "Time taken by naiveMultithreadedMatrixMultiplication2: " << duration.count() * 1e-6 / batchSize << " seconds" << endl;
-
+	cout << "Time taken by naiveMatrixMultiplication: " 
+		<< duration.count() * 1e-6 / batchSize << " seconds" << endl;
 	memcpy(D, C, M * N * sizeof(float));
+	
+	
+	memset(C, 0, M* N * sizeof(float));
+	iter = batchSize;
+	start = high_resolution_clock::now();
+	while (iter--) {
+		MatrixMultiplicationParallelSetup(A, B, C, M, 16);
+	}
+	end = high_resolution_clock::now();
+	duration = duration_cast<microseconds>(end - start);
+	cout << "Time taken by naiveMultithreadedMatrixMultiplication: "
+		<< duration.count() * 1e-6 / batchSize << " seconds" << endl;
+
+	
 	memset(C, 0, M * N * sizeof(float));
 	iter = batchSize;
 	start = high_resolution_clock::now();
 	while (iter--) {
-		naiveMultithreadedMatrixMultiplicationSetup(M, N, K, A, B, C);
+		MatrixMultiplicationBlocked(A, B, C, M);
 	}
 	end = high_resolution_clock::now();
 	duration = duration_cast<microseconds>(end - start);
-	cout << "Time taken by naiveMultithreadedMatrixMultiplication: " << duration.count() * 1e-6 / batchSize << " seconds" << endl;
+	cout << "Time taken by blockedMatrixMultiplication: "
+		<< duration.count() * 1e-6 / batchSize << " seconds" << endl;
+
 	
-	/*for (int i = 0; i < M; i++) {
-		for (int j = 0; j < N; j++) {
-			cout << C[i * N + j] << " ";
-		}
-		cout << endl;
+	memset(C, 0, M * N * sizeof(float));
+	iter = batchSize;
+	start = high_resolution_clock::now();
+	while (iter--) {
+		MatrixMultiplicationBlockedParallelSetup(A, B, C, M, 16);
 	}
-	cout << endl;*/
+	end = high_resolution_clock::now();
+	duration = duration_cast<microseconds>(end - start);
+	cout << "Time taken by blockedMultithreadedMatrixMultiplication: "
+		<< duration.count() * 1e-6 / batchSize << " seconds" << endl;
 	
-	/*for (int i = 0; i < M * N; i++) {
+	memset(C, 0, M * N * sizeof(float));
+	iter = batchSize;
+	start = high_resolution_clock::now();
+	while (iter--) {
+		MatrixMultiplicationBlockedColumn(A, B, C, M);
+	}
+	end = high_resolution_clock::now();
+	duration = duration_cast<microseconds>(end - start);
+	cout << "Time taken by blockedColumnMatrixMultiplication: "
+		<< duration.count() * 1e-6 / batchSize << " seconds" << endl;
+
+	memset(C, 0, M * N * sizeof(float));
+	iter = batchSize;
+	start = high_resolution_clock::now();
+	while (iter--) {
+		MatrixMultiplicationBlockedColumnParallelSetup(A, B, C, M, 16);
+	}
+	end = high_resolution_clock::now();
+	duration = duration_cast<microseconds>(end - start);
+	cout << "Time taken by blockedColumnMultithreadedMatrixMultiplication: "
+		<< duration.count() * 1e-6 / batchSize << " seconds" << endl;
+	
+	for (int i = 0; i < M * N; i++) {
 		if (C[i] != D[i]) {
 			cout << "Error" << endl;
 			break;
 		}
-	}*/
+	}
 	
 	delete[] A;
 	delete[] B;
