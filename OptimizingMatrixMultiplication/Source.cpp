@@ -1,6 +1,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include "Randoms.h"
 
 using std::cout;
 using std::endl;
@@ -64,9 +65,13 @@ __global__ void matrixMul(A_gpu,B_gpu,C_gpu,K){
 
 }*/
 
-void naiveMultithreadedMatrixMultiplication(int M, int N, int K, float* A, float* B, float* C, int i, int j) {
-	for (int k = 0; k < K; k++) {
-		C[i * N + j] += A[i * K + k] * B[k * N + j];
+void naiveMultithreadedMatrixMultiplication(int M, int N, int K, float* A, float* B, float* C, int startNode, int nodes) {
+	for (int i = startNode; i < startNode + nodes; i++) {
+		int row = i / N;
+		int column = i % N;
+		for (int k = 0; k < K; k++) {
+			C[i] += A[row * K + k] * B[k * N + column];
+		}
 	}
 }
 
@@ -78,30 +83,35 @@ void naiveMultithreadedMatrixMultiplicationSetup(int M, int N, int K, float* A, 
 
 	int currentNode = 0;
 	for (int i = 0; i < processesPerThreadRemainder; i++) {
-		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, currentNode / N, currentNode % N);
+		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, currentNode, processesPerThread + 1);
 		currentNode += processesPerThread + 1;
+	}
+	for (int i = processesPerThreadRemainder; i < threads; i++) {
+		processes[i] = thread(naiveMultithreadedMatrixMultiplication, M, N, K, A, B, C, currentNode, processesPerThread);
+		currentNode += processesPerThread;
+	}
+	for (int i = 0; i < threads; i++) {
+		processes[i].join();
 	}
 }
 
 int main() {
-	const int batchSize = 100;
+	const int batchSize = 1;
 	int iter;
+	Random random;
 
-	int M = 100;
-	int N = 100;
-	int K = 100;
+	int M = 10;
+	int N = 10;
+	int K = 10;
 	float* A = new float[M * K];
 	float* B = new float[K * N];
 	float* C = new float[M * N];
 
-	memset(A, 0.34, M * K * sizeof(float));
-	memset(B, 1.23, K * N * sizeof(float));
-	memset(C, 0, M * N * sizeof(float));
-
-	iter = 600;
-	while (iter--) {
-		naiveMatrixMultiplication(M, N, K, A, B, C);
+	for (int i = 0; i < M * K; i++) {
+		A[i] = random.normalRand();
+		B[i] = random.normalRand();
 	}
+	memset(C, 0, M * N * sizeof(float));
 
 	iter = batchSize;
 	auto start = high_resolution_clock::now();
@@ -111,7 +121,16 @@ int main() {
 	auto end = high_resolution_clock::now();
 	auto duration = duration_cast<microseconds>(end - start);
 	cout << "Time taken by naiveMatrixMultiplication: " << duration.count() * 1e-6 / batchSize << " seconds" << endl;
+	
+	/*for (int i = 0; i < M; i++) {
+		for (int j = 0; j < N; j++) {
+			cout << C[i * N + j] << " ";
+		}
+		cout << endl;
+	}
+	cout << endl;*/
 
+	memset(C, 0, M * N * sizeof(float));
 	iter = batchSize;
 	start = high_resolution_clock::now();
 	while (iter--) {
@@ -120,7 +139,15 @@ int main() {
 	end = high_resolution_clock::now();
 	duration = duration_cast<microseconds>(end - start);
 	cout << "Time taken by naiveMultithreadedMatrixMultiplication: " << duration.count() * 1e-6 / batchSize << " seconds" << endl;
-
+	
+	/*for (int i = 0; i < M; i++) {
+		for (int j = 0; j < N; j++) {
+			cout << C[i * N + j] << " ";
+		}
+		cout << endl;
+	}
+	cout << endl;*/
+	
 	delete[] A;
 	delete[] B;
 	delete[] C;
